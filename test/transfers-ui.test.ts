@@ -75,11 +75,27 @@ async function read<T>(script: string): Promise<T> {
 
 /** Select bytes as the system picker would. Clicking the real button first captures its destination. */
 async function upload(directory: string, name: string, bytes: number[], scope = ".files-tile") {
+    if (scope === ".files-tile") {
+        await page.evaluate(`
+            const area = document.querySelector('.files-tile .file-upload-area');
+            if (area.dataset.dropPath !== ${JSON.stringify(directory)}) {
+                const row = [...area.querySelectorAll('.ft-row.dir')].find(row => row.dataset.path === ${JSON.stringify(directory)});
+                (row ?? area.querySelector('.ft-root')).click();
+            }
+        `);
+    }
+
+    await until(
+        async () =>
+            read<boolean>(
+                `return JSON.stringify([...document.querySelectorAll(${JSON.stringify(`${scope} .file-upload-area`)})].some(area => area.dataset.dropPath === ${JSON.stringify(directory)}))`,
+            ),
+        "upload destination",
+    );
     await page.evaluate(`
-        const button = [...document.querySelectorAll(${JSON.stringify(`${scope} button`)})].find(
-            each => each.getAttribute('aria-label') === ${JSON.stringify(`Upload files to ${directory}`)}
-        );
-        const input = button.previousElementSibling;
+        const area = [...document.querySelectorAll(${JSON.stringify(`${scope} .file-upload-area`)})].find(area => area.dataset.dropPath === ${JSON.stringify(directory)});
+        const button = area.querySelector('.file-upload-tools button');
+        const input = area.querySelector('input[type=file]');
         input.click = () => {};
         button.click();
         const selected = new DataTransfer();
@@ -167,9 +183,80 @@ for (const [name, viewport] of [
                 () => existsSync(join(work, `${name}-root.txt`)),
                 "upload into the session root",
             );
+            await until(
+                async () =>
+                    read<boolean>(
+                        `return JSON.stringify(!document.querySelector('.file-upload-tools button').disabled)`,
+                    ),
+                "upload finished",
+            );
+            await page.evaluate(`
+                const row = document.querySelector('.ft-row[title="nested"]');
+                const transfer = new DataTransfer();
+                transfer.items.add(new File([new Uint8Array([0, 128, 255])], ${JSON.stringify(`${name}-drop.bin`)}));
+                row.dispatchEvent(new DragEvent('dragover', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+                row.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+            `);
+            await until(
+                () => existsSync(join(directory, `${name}-drop.bin`)),
+                "drop into the pointed folder",
+            );
+            await until(
+                async () =>
+                    read<boolean>(
+                        `return JSON.stringify(!document.querySelector('.file-upload-tools button').disabled)`,
+                    ),
+                "drop finished",
+            );
+            assert.deepEqual(
+                readFileSync(join(directory, `${name}-drop.bin`)),
+                Buffer.from([0, 128, 255]),
+            );
         },
     );
 }
+
+test("an upload can be cancelled without losing the Files pane", real, async () => {
+    await page.evaluate(`
+        window.transferFetch = window.fetch;
+        window.fetch = (url, options) => {
+            if (String(url).includes('name=cancel-me')) {
+                return new Promise((resolve, reject) => options.signal.addEventListener('abort', () => reject(new DOMException('Cancelled', 'AbortError')), { once: true }));
+            }
+            return window.transferFetch(url, options);
+        };
+    `);
+
+    try {
+        await upload(work, "cancel-me", [65]);
+        await until(
+            async () =>
+                read<boolean>(
+                    `return JSON.stringify([...document.querySelectorAll('.file-upload-tools button')].some(button => button.textContent.trim() === 'Cancel upload'))`,
+                ),
+            "cancel control",
+        );
+        await page.evaluate(
+            `[...document.querySelectorAll('.file-upload-tools button')].find(button => button.textContent.trim() === 'Cancel upload').click()`,
+        );
+        await until(
+            async () =>
+                read<boolean>(
+                    `return JSON.stringify(document.querySelector('.file-transfer-status').textContent === 'Upload cancelled.')`,
+                ),
+            "cancelled upload",
+        );
+        assert.equal(existsSync(join(work, "cancel-me")), false);
+        assert.equal(
+            await read<boolean>(
+                `return JSON.stringify(document.querySelector('.file-upload-tools button').disabled)`,
+            ),
+            false,
+        );
+    } finally {
+        await page.evaluate("window.fetch = window.transferFetch; delete window.transferFetch");
+    }
+});
 
 test("the folder viewer's own Upload button refreshes its entries", real, async () => {
     await page.evaluate(
@@ -178,7 +265,7 @@ test("the folder viewer's own Upload button refreshes its entries", real, async 
     await until(
         async () =>
             read<boolean>(
-                `return JSON.stringify(!!document.querySelector('.sheet-body .file-tools input[type="file"]'))`,
+                `return JSON.stringify(!!document.querySelector('.sheet-body .file-upload-tools input[type="file"]'))`,
             ),
         "folder viewer",
     );
@@ -186,7 +273,7 @@ test("the folder viewer's own Upload button refreshes its entries", real, async 
     await until(
         async () =>
             read<boolean>(
-                `return JSON.stringify(document.querySelector('.sheet-body')?.textContent.includes('from-folder-view.txt'))`,
+                `return JSON.stringify([...document.querySelectorAll('.sheet-body .file-entry')].some(entry => entry.textContent.includes('from-folder-view.txt')))`,
             ),
         "refreshed folder viewer",
     );
@@ -261,7 +348,7 @@ test(
             assert.equal(
                 JSON.parse(
                     await other.evaluate(
-                        `return JSON.stringify(!!document.querySelector('.ft-upload, .ft-filter, [role="tabpanel"][aria-label="Changes"]'))`,
+                        `return JSON.stringify(!!document.querySelector('.file-upload-tools, .ft-filter, [role="tabpanel"][aria-label="Changes"]'))`,
                     ),
                 ),
                 false,
@@ -327,11 +414,11 @@ test(
             "Delete button",
         );
         await other.evaluate(
-            `window.confirm = () => false; [...document.querySelectorAll('.file-tools button')].find(button => button.textContent.trim() === 'Delete').click()`,
+            `document.querySelector('.file-tools .file-menu summary').click(); window.confirm = () => false; [...document.querySelectorAll('.file-tools button')].find(button => button.textContent.trim() === 'Delete').click()`,
         );
         assert.equal(lstatSync(link).isSymbolicLink(), true);
         await other.evaluate(
-            `window.confirm = () => true; [...document.querySelectorAll('.file-tools button')].find(button => button.textContent.trim() === 'Delete').click()`,
+            `document.querySelector('.file-tools .file-menu summary').click(); window.confirm = () => true; [...document.querySelectorAll('.file-tools button')].find(button => button.textContent.trim() === 'Delete').click()`,
         );
         await until(() => !existsSync(link), "link deleted");
         assert.equal(readFileSync(target, "utf8"), "keep");

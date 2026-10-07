@@ -15,6 +15,7 @@ import {
 import { highlight, highlightLines, langOf } from "./highlight.js";
 import { branchAvailable } from "./sheets/branch.js";
 import { actions, attempt, canSteer, notify, openSheet, store } from "./store.js";
+import { FileMenu } from "./transfers.js";
 import { html, Icon, Loader, openFile, shortPath } from "./ui.js";
 
 // ─── Preferences ────────────────────────────────────────────────────────────────────
@@ -1172,7 +1173,9 @@ function ReviewFile({
               })
             : setUndoing(true);
 
-    const tools = html`${
+    const tools = html`
+    ${file.kind !== "deleted" && html`<${FileMenu} path=${`${root}/${file.path}`} kind="file" />`}
+    ${
         file.kind !== "deleted" &&
         html`<button
             class="icon-button dv-tool"

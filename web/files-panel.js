@@ -5,7 +5,8 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { DiffReview, KIND_LETTERS, reloadChanges, useChanges, useWidth } from "./diff.js";
 import { loadFiles, suggestFiles } from "./files.js";
-import { FileView, UploadButton } from "./sheets/file.js";
+import { FileView } from "./sheets/file.js";
+import { FILES_CHANGED, FileMenu, UploadArea } from "./transfers.js";
 import { actions, canSteer, closePeople, store } from "./store.js";
 import { html, Icon, Loader, Marked, shortPath } from "./ui.js";
 
@@ -186,14 +187,7 @@ function TreeFolder({ path, depth, ctx }) {
                     ${inside && html`<span class="ft-dot" title="Has changes"></span>`}
                     ${change && html`<span class=${`ft-kind ${change}`}>${KIND_LETTERS[change]}</span>`}
                 </button>
-                ${
-                    entry.dir &&
-                    html`<${UploadButton}
-                        directory=${full}
-                        compact=${true}
-                        onUploaded=${() => ctx.uploaded(full)}
-                    />`
-                }
+                <${FileMenu} path=${full} kind=${entry.dir ? "folder" : "file"} />
             </div>
             ${open && html`<${TreeFolder} path=${full} depth=${depth + 1} ctx=${ctx} />`}
         </div>`;
@@ -302,6 +296,22 @@ function FilesTab({ changes }) {
     const [savedQuery, setQuery] = useState("");
     const query = canSteer() ? savedQuery : "";
     const [version, setVersion] = useState(0);
+    const [transferPath, setTransferPath] = useState("");
+
+    useEffect(() => setTransferPath(""), [id, root]);
+    useEffect(() => {
+        const changed = (event) => {
+            if (event.detail?.id === id) {
+                folders.clear();
+                setVersion((before) => before + 1);
+                reloadChanges(id);
+            }
+        };
+
+        addEventListener(FILES_CHANGED, changed);
+
+        return () => removeEventListener(FILES_CHANGED, changed);
+    }, [id]);
     // Another branch has other files: the tree and the open file are read again when it changes.
     const head = JSON.stringify(view.branch);
     const ref = useRef(null);
@@ -368,6 +378,7 @@ function FilesTab({ changes }) {
     };
 
     const pick = (path, line) => {
+        setTransferPath(path.slice(0, path.lastIndexOf("/")) || root);
         setSelected({ path, line });
         reveal(path);
     };
@@ -392,7 +403,8 @@ function FilesTab({ changes }) {
         }
     }, [query === ""]);
 
-    const toggle = (path) =>
+    const toggle = (path) => {
+        setTransferPath(path);
         update((before) => {
             const next = new Set(before);
 
@@ -404,6 +416,7 @@ function FilesTab({ changes }) {
 
             return next;
         });
+    };
 
     /** Arrows move through the tree as in an editor's: up and down, right opens a folder, left closes it or goes up. */
     const onTreeKey = (event) => {
@@ -469,12 +482,6 @@ function FilesTab({ changes }) {
         reloadChanges(id);
     };
 
-    const uploaded = (directory) => {
-        setQuery("");
-        reveal(directory, true);
-        refresh();
-    };
-
     const ctx = {
         id,
         expanded,
@@ -484,7 +491,6 @@ function FilesTab({ changes }) {
         version: `${version}:${head}`,
         toggle,
         pick,
-        uploaded,
     };
 
     const showTree = side || !selected;
@@ -495,7 +501,7 @@ function FilesTab({ changes }) {
         return html`<div class="ft" ref=${ref}><${Loader} label="Opening the folder" /></div>`;
     }
 
-    return html`<div class=${`ft ${side ? "side" : ""}`} ref=${ref}>
+    const content = html`<div class=${`ft ${side ? "side" : ""}`} ref=${ref}>
         ${
             showTree &&
             html`<div class="ft-pane">
@@ -524,11 +530,6 @@ function FilesTab({ changes }) {
                             spellcheck="false"
                         />`
                     }
-                    <${UploadButton}
-                        directory=${root}
-                        compact=${true}
-                        onUploaded=${() => uploaded(root)}
-                    />
                     <button
                         class="icon-button"
                         type="button"
@@ -548,7 +549,14 @@ function FilesTab({ changes }) {
                         <${Icon} name="reload" size=${16} />
                     </button>
                 </div>
-                <div class="ft-root mono" title=${root}>${shortPath(root, server?.home)}</div>
+                <button
+                    class="ft-root mono"
+                    type="button"
+                    title=${`Select ${root}`}
+                    onClick=${() => setTransferPath(root)}
+                >
+                    ${shortPath(root, server?.home)}
+                </button>
                 <div class="ft-tree" role="tree" aria-label="Files" onKeyDown=${onTreeKey}>
                     ${
                         query === ""
@@ -601,7 +609,6 @@ function FilesTab({ changes }) {
                           path=${selected.path}
                           line=${selected.line}
                           onOpen=${(path) => pick(path)}
-                          onChange=${refresh}
                       />
                   </div>`
                 : side &&
@@ -611,6 +618,8 @@ function FilesTab({ changes }) {
                   </div>`
         }
     </div>`;
+
+    return html`<${UploadArea} path=${transferPath || root}>${content}<//>`;
 }
 
 export function FilesPanel() {

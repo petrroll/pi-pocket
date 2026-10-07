@@ -260,7 +260,7 @@ test("interrupted uploads are removed and declared oversized files are refused b
     const status = await new Promise<number>((resolve) => {
         const huge = rawRequest(`${base}/api/c/${id}/upload?directory=.&name=huge.bin`, {
             method: "POST",
-            headers: { ...headers(owner), "content-length": String(51 * 1024 * 1024) },
+            headers: { ...headers(owner), "content-length": String(101 * 1024 * 1024) },
         });
 
         huge.on("response", (response) => {

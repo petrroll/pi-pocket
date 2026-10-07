@@ -3,7 +3,6 @@ import { randomUUID } from "node:crypto";
 import { rmSync } from "node:fs";
 import { open } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
-import { pipeline } from "node:stream/promises";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { Attachment, SubmitRequest } from "../commands.ts";
 import { HttpError } from "../errors.ts";
@@ -11,6 +10,7 @@ import { serveDownload, serveImage, TYPES } from "./assets.ts";
 import { type ApiRequest, json, readJson, send } from "./io.ts";
 
 const MAX_UPLOAD = 50 * 1024 * 1024;
+const MAX_WORKSPACE_UPLOAD = 100 * 1024 * 1024;
 
 const ENTRY_IMAGE_TYPES = new Set([
     "image/png",
@@ -409,12 +409,15 @@ export async function conversationRoutes(
     if (third === "upload" && method === "POST") {
         app.requireSteer(user);
 
-        if (Number(request.headers["content-length"] ?? 0) > MAX_UPLOAD) {
-            throw new HttpError(413, "Files can be up to 50 MB");
+        const directory = url.searchParams.get("directory");
+        const limit = directory === null ? MAX_UPLOAD : MAX_WORKSPACE_UPLOAD;
+        const tooLarge = `Files can be up to ${limit / 1024 / 1024} MiB`;
+
+        if (Number(request.headers["content-length"] ?? 0) > limit) {
+            throw new HttpError(413, tooLarge);
         }
 
         await app.conversation(id);
-        const directory = url.searchParams.get("directory");
         const given = url.searchParams.get("name") ?? "upload";
         const name = directory === null ? safeName(given) : given;
         // Attachments keep unique names; Files uploads keep their names, without overwriting anything.
@@ -437,18 +440,25 @@ export async function conversationRoutes(
         );
         let size = 0;
 
-        request.on("data", (chunk: Buffer) => {
-            size += chunk.length;
-
-            if (size > MAX_UPLOAD) {
-                request.destroy(new HttpError(413, "Files can be up to 50 MB"));
-            }
-        });
-
         try {
-            await pipeline(request, target.createWriteStream());
+            // Keep the socket alive when rejecting a chunked upload, so the browser
+            // receives the error rather than a failed network request.
+            for await (const chunk of request.iterator({ destroyOnReturn: false })) {
+                size += chunk.length;
+
+                if (size > limit) {
+                    throw new HttpError(413, tooLarge);
+                }
+
+                await target.writeFile(chunk);
+            }
+
+            if (!request.complete) {
+                throw new HttpError(400, "The upload stopped before it finished");
+            }
         } catch (error) {
             // A cut-off or oversized upload leaves nothing behind; this file was created by this request.
+            request.resume();
             rmSync(file, { force: true });
 
             if (error instanceof HttpError || request.complete) {

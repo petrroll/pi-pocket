@@ -253,6 +253,7 @@ export async function api(path, body, options = {}) {
     const init = {
         method: body === undefined && !options.method ? "GET" : (options.method ?? "POST"),
         headers: { "X-Pocket": "1" },
+        signal: options.signal,
     };
 
     if (body !== undefined) {
@@ -820,16 +821,16 @@ export const actions = {
     createSession: (cwd, { worktree = false } = {}) =>
         api("sessions", { cwd, ...(worktree ? { worktree } : {}) }),
     updateSession: (id, patch) => api(`sessions/${id}`, patch),
-    upload: (file, { id = current(), directory } = {}) => {
+    upload: (file, { id = current(), directory, signal } = {}) => {
         const query = new URLSearchParams({
             name: file.name,
             ...(directory === undefined ? {} : { directory }),
         });
 
-        return api(`c/${id}/upload?${query}`, file);
+        return api(`c/${id}/upload?${query}`, file, { signal });
     },
-    deleteFile: (path) =>
-        api(`c/${current()}/file?path=${encodeURIComponent(path)}`, undefined, {
+    deleteFile: (path, id = current()) =>
+        api(`c/${id}/file?path=${encodeURIComponent(path)}`, undefined, {
             method: "DELETE",
         }),
     fullEntry: (entryId) => api(`c/${current()}/entry/${entryId}`),

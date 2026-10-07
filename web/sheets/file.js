@@ -7,6 +7,7 @@ import { highlightLines, langOf } from "../highlight.js";
 import { HtmlPreview } from "../rich.js";
 import { RunFrame } from "../run-frame.js";
 import { actions, canSteer, closeSheet, insertIntoComposer, notify, store } from "../store.js";
+import { FileMenu, UploadArea } from "../transfers.js";
 import {
     copyText,
     fileUrl,
@@ -49,10 +50,9 @@ function useLines(file, path) {
  * folder to browse, under a bar with its path and the viewer's buttons (copy, mention, preview). `line` scrolls to and
  * marks that line. `onOpen` opens an entry of a folder.
  */
-export function FileView({ path, line, onOpen = openFile, onLoad, onChange }) {
+export function FileView({ path, line, onOpen = openFile, onLoad }) {
     const [file, setFile] = useState(null);
     const [version, setVersion] = useState(0);
-    const [deleting, setDeleting] = useState(false);
     const [error, setError] = useState(null);
     const markdown = isMarkdown(path);
     const page = isPage(path);
@@ -99,31 +99,6 @@ export function FileView({ path, line, onOpen = openFile, onLoad, onChange }) {
         }
     }, [file, preview, line]);
 
-    const remove = async () => {
-        if (
-            !confirm(
-                `Delete “${path}”? This cannot be undone.${file?.kind === "folder" ? " Only empty folders can be deleted." : ""}`,
-            )
-        ) {
-            return;
-        }
-
-        setDeleting(true);
-
-        try {
-            // Use the selected path, not the read response's canonical symlink target.
-            await actions.deleteFile(path);
-            setFile(null);
-            setError("Deleted.");
-            notify("info", "Deleted.");
-            onChange?.();
-        } catch (failure) {
-            notify("error", failure.message);
-        } finally {
-            setDeleting(false);
-        }
-    };
-
     const shown = file?.display ?? path;
     const name = shown.replace(/\/$/, "").split("/").pop() || shown;
 
@@ -134,6 +109,17 @@ export function FileView({ path, line, onOpen = openFile, onLoad, onChange }) {
                 ${file?.size !== undefined ? ` · ${formatBytes(file.size)}` : ""}
                 ${file?.kind === "text" ? ` · ${lines.length} ${lines.length === 1 ? "line" : "lines"}` : ""}
             </span>
+            ${
+                file &&
+                html`<${FileMenu}
+                    path=${path}
+                    kind=${file.kind}
+                    onDeleted=${() => {
+                        setFile(null);
+                        setError("File deleted.");
+                    }}
+                />`
+            }
             <${FileActions}
                 file=${file}
                 shown=${shown}
@@ -142,12 +128,6 @@ export function FileView({ path, line, onOpen = openFile, onLoad, onChange }) {
                 onPreview=${setPreview}
                 running=${page && preview ? running : null}
                 onRun=${setRunning}
-                onUploaded=${() => {
-                    setVersion((before) => before + 1);
-                    onChange?.();
-                }}
-                deleting=${deleting}
-                onDelete=${remove}
             />
         </div>
         ${error && html`<p class="muted">${error}</p>`}
@@ -166,24 +146,29 @@ export function FileView({ path, line, onOpen = openFile, onLoad, onChange }) {
         }
         ${
             file?.kind === "folder" &&
-            html`<div class="group">
-                ${file.entries.length === 0 && html`<p class="muted">An empty folder.</p>`}
-                ${file.entries.map((entry) =>
-                    item(
-                        html`<span class="file-entry">
-                            <${Icon} name=${entry.dir ? "folder" : "file"} size=${15} /> ${entry.name}
-                            ${entry.dir ? "/" : ""}
-                        </span>`,
-                        () => onOpen(`${file.path}/${entry.name}`),
-                    ),
-                )}
-                ${
-                    file.truncated &&
-                    html`<p class="muted small">
-                        Only the first ${file.entries.length} are listed.
-                    </p>`
-                }
-            </div>`
+            html`<${UploadArea}
+                path=${file.path}
+                onUploaded=${() => setVersion((before) => before + 1)}
+            >
+                <div class="group">
+                    ${file.entries.length === 0 && html`<p class="muted">An empty folder.</p>`}
+                    ${file.entries.map((entry) =>
+                        item(
+                            html`<span class="file-entry">
+                                <${Icon} name=${entry.dir ? "folder" : "file"} size=${15} /> ${entry.name}
+                                ${entry.dir ? "/" : ""}
+                            </span>`,
+                            () => onOpen(`${file.path}/${entry.name}`),
+                        ),
+                    )}
+                    ${
+                        file.truncated &&
+                        html`<p class="muted small">
+                            Only the first ${file.entries.length} are listed.
+                        </p>`
+                    }
+                </div>
+            <//>`
         }
         ${file?.kind === "text" && preview && markdown && html`<${Markdown} text=${file.text} />`}
         ${
@@ -251,20 +236,9 @@ function FileLines({ lines, colored, all, line }) {
 
 /**
  * The viewer's buttons: Preview or Source for Markdown and pages, Run for a previewed page (`running` is null where it
- * does not apply), Copy, Download (or Upload for folders), and @ Mention.
+ * does not apply), Copy and @ Mention. File transfers use the shared menu.
  */
-function FileActions({
-    file,
-    shown,
-    previewable,
-    preview,
-    onPreview,
-    running,
-    onRun,
-    onUploaded,
-    deleting,
-    onDelete,
-}) {
+function FileActions({ file, shown, previewable, preview, onPreview, running, onRun }) {
     return html`${
         file?.kind === "text" &&
         running !== null &&
@@ -296,38 +270,6 @@ function FileActions({
     }
     ${
         file &&
-        ["text", "image", "binary"].includes(file.kind) &&
-        html`<a
-            class="button small"
-            href=${`/api/c/${store.state.conversationId}/download?path=${encodeURIComponent(file.path)}`}
-            download=${file.path.split("/").pop()}
-        >
-            Download
-        </a>`
-    }
-    ${
-        file?.kind === "folder" &&
-        html`<${UploadButton}
-            directory=${file.path}
-            onUploaded=${onUploaded}
-        />`
-    }
-    ${
-        file &&
-        ["text", "image", "binary", "folder"].includes(file.kind) &&
-        canSteer() &&
-        file.path !== (store.state.view.agent?.cwd ?? store.state.view.conversation?.cwd) &&
-        html`<button
-            class="button small danger"
-            type="button"
-            disabled=${deleting || store.state.view.live?.busy}
-            onClick=${onDelete}
-        >
-            ${deleting ? "Deleting…" : "Delete"}
-        </button>`
-    }
-    ${
-        file &&
         canSteer() &&
         html`<button
             class="button small"
@@ -337,71 +279,6 @@ function FileActions({
             @ Mention
         </button>`
     }`;
-}
-
-/** Upload into this folder, not into the message box's attachment stash. */
-export function UploadButton({ directory, onUploaded, compact = false }) {
-    const input = useRef(null);
-    const target = useRef(null);
-    const [busy, setBusy] = useState(false);
-    const title = `Upload files to ${directory}`;
-
-    if (!canSteer()) {
-        return null;
-    }
-
-    const upload = async (event) => {
-        const files = [...event.currentTarget.files];
-        const destination = target.current;
-
-        event.currentTarget.value = "";
-
-        if (!destination || files.length === 0 || busy) {
-            return;
-        }
-
-        setBusy(true);
-        let written = 0;
-
-        try {
-            for (const file of files) {
-                if (file.size > 50 * 1024 * 1024) {
-                    throw new Error("Files can be up to 50 MB");
-                }
-
-                await actions.upload(file, destination);
-                written++;
-            }
-
-            notify("info", `Uploaded ${written} ${written === 1 ? "file" : "files"}.`);
-        } catch (error) {
-            notify("error", error.message);
-        } finally {
-            setBusy(false);
-
-            if (written > 0) {
-                onUploaded?.();
-            }
-        }
-    };
-
-    return html`<input ref=${input} type="file" multiple hidden onChange=${upload} />
-        <button
-            class=${compact ? "icon-button ft-upload" : "button small"}
-            type="button"
-            title=${busy ? "Uploading…" : title}
-            aria-label=${title}
-            aria-busy=${busy ? "true" : "false"}
-            disabled=${busy}
-            onClick=${() => {
-                // Keep the session and destination chosen before the system picker opens.
-                target.current = { id: store.state.conversationId, directory };
-                input.current.click();
-            }}
-        >
-            <${Icon} name="upload" size=${16} />
-            ${!compact && (busy ? "Uploading…" : "Upload")}
-        </button>`;
 }
 
 /** The viewer as a sheet: opened from a path in a reply, a tool card, a mention, or Changes. */

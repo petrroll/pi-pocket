@@ -6042,9 +6042,98 @@ textarea.notes {
     min-width: 0;
 }
 
-.ft-entry .ft-upload {
-    flex: none;
-    padding: 0.25rem;
+.file-upload-area {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.files-body > .file-upload-area {
+    height: 100%;
+}
+
+.file-upload-area > .ft {
+    flex: 1;
+    min-height: 0;
+}
+
+.file-upload-tools {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid var(--line);
+}
+
+.file-upload-hint {
+    flex: 1;
+    min-width: 150px;
+    overflow-wrap: anywhere;
+}
+
+.file-transfer-status:not(:empty) {
+    flex-basis: 100%;
+    overflow-wrap: anywhere;
+}
+
+.file-drop-overlay {
+    position: absolute;
+    inset: 0;
+    z-index: 25;
+    pointer-events: none;
+    display: grid;
+    place-content: center;
+    background: color-mix(in srgb, var(--bg) 90%, transparent);
+    border: 2px dashed var(--accent);
+    color: var(--accent);
+}
+
+.file-menu {
+    display: inline-block;
+    flex-shrink: 0;
+}
+
+.file-menu > summary {
+    list-style: none;
+    display: grid;
+    place-items: center;
+    cursor: pointer;
+    min-width: 28px;
+}
+
+.file-menu > summary::-webkit-details-marker {
+    display: none;
+}
+
+.file-menu-actions {
+    position: fixed;
+    z-index: 9999;
+    min-width: 180px;
+    padding: 0.3rem;
+    background: var(--bg);
+    color: var(--text);
+    border: 1px solid var(--line);
+    box-shadow: 0 5px 20px #0005;
+}
+
+.file-menu-actions > * {
+    display: block;
+    width: 100%;
+    padding: 0.5rem 0.65rem;
+    text-align: left;
+    text-decoration: none;
+    color: inherit;
+}
+
+.file-menu-actions > *:hover {
+    background: var(--hover);
+}
+
+.file-menu-actions > .danger {
+    color: var(--err);
 }
 
 .ft-row.muted {
@@ -6468,10 +6557,6 @@ textarea.notes {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-}
-
-.file-tools .button.danger {
-    color: var(--err);
 }
 
 .file-tools .icon-button {

@@ -452,8 +452,13 @@ export function createApi(options: HttpOptions, auth: Auth) {
         }
 
         if (first === "invite" && method === "POST") {
-            const grant = inviteGrant(user, await readJson(request));
-            const invite = auth.createInvite(user, grant);
+            const body = await readJson<{
+                role?: unknown;
+                session?: unknown;
+                ttlMinutes?: unknown;
+            }>(request);
+            const grant = inviteGrant(user, body);
+            const invite = auth.createInvite(user, grant, body.ttlMinutes);
             const here = origin(request);
             const loopback = /^https?:\/\/(localhost|127\.\d+\.\d+\.\d+|\[::1\])(:\d+)?$/.test(
                 here,

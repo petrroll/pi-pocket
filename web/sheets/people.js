@@ -25,21 +25,31 @@ export function InviteSheet({ session = null }) {
     const here = view.conversation?.kind === "session" ? view.conversation : null;
     const [role, setRole] = useState("guest");
     const [only, setOnly] = useState(session !== null);
+    const [ttlMinutes, setTtlMinutes] = useState(15);
     const [invite, setInvite] = useState(null);
-    const create = () =>
-        attempt(async () => {
-            setInvite(null);
-            setInvite(
-                await api(
-                    "invite",
-                    collab() ? { role, ...(only && here ? { session: here.id } : {}) } : {},
-                ),
-            );
-        });
+    const [generation, setGeneration] = useState(0);
+    const create = () => setGeneration((value) => value + 1);
 
     useEffect(() => {
-        create();
-    }, [role, only]);
+        let cancelled = false;
+
+        attempt(async () => {
+            setInvite(null);
+            const result = await api("invite", {
+                ...(collab() ? { role, ...(only && here ? { session: here.id } : {}) } : {}),
+                ttlMinutes,
+            });
+
+            // A slower response for old options must not replace the invite now requested.
+            if (!cancelled) {
+                setInvite(result);
+            }
+        });
+
+        return () => {
+            cancelled = true;
+        };
+    }, [role, only, ttlMinutes, generation]);
     const where = only && here ? `only “${here.title}”` : "every session";
 
     return html`<${Sheet} title="Invite someone" onClose=${closeSheet}>
@@ -77,8 +87,25 @@ export function InviteSheet({ session = null }) {
                 </div>`
             }`
         }
+        <div class="field">
+            <label class="label" for="invite-ttl">Expires after</label>
+            <select
+                id="invite-ttl"
+                value=${ttlMinutes}
+                onChange=${(event) => setTtlMinutes(Number(event.currentTarget.value))}
+            >
+                <option value="15">15 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="1440">1 day</option>
+                <option value="10080">7 days</option>
+            </select>
+            <div class="muted small">Changing these options makes a new invite.</div>
+        </div>
         <p class="muted small">
-            Scan this on the other device, or send it the link. It works once and expires in 15 minutes. Whoever joins sees ${where}.
+            Scan this on the other device, or send it the link. It works once. Whoever joins sees ${where}.
+        </p>
+        <p class="muted small">
+            ${invite && `Expires ${new Date(invite.expiresAt).toLocaleString()}. `}Restarting the server also expires unused invites.
         </p>
         ${
             invite?.access?.url &&

@@ -122,7 +122,7 @@ export async function join(
             410,
             page(
                 "Pi Pocket",
-                "<h1>Invite expired</h1><p>Invites last 15 minutes and work once. Ask for a new one.</p>",
+                "<h1>Invite expired</h1><p>This invite has expired or is no longer available. Invites work once. Ask for a new one.</p>",
             ),
             "text/html; charset=utf-8",
         );

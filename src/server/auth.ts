@@ -1,9 +1,11 @@
 import { randomBytes } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ConfigStore, Role, User } from "./config.ts";
+import { HttpError } from "./errors.ts";
 
 export const COOKIE = "pocket_auth";
-const INVITE_TTL_MS = 15 * 60_000;
+const DEFAULT_INVITE_TTL_MINUTES = 15;
+const MAX_INVITE_TTL_MINUTES = 7 * 24 * 60;
 
 export function parseCookies(header: string | undefined): Record<string, string> {
     const out: Record<string, string> = {};
@@ -109,7 +111,20 @@ export class Auth {
     createInvite(
         by: User,
         grant: InviteGrant = { role: "guest" },
+        ttlMinutes: unknown = DEFAULT_INVITE_TTL_MINUTES,
     ): { code: string; expiresAt: number } {
+        if (
+            typeof ttlMinutes !== "number" ||
+            !Number.isInteger(ttlMinutes) ||
+            ttlMinutes < 1 ||
+            ttlMinutes > MAX_INVITE_TTL_MINUTES
+        ) {
+            throw new HttpError(
+                400,
+                "Invite lifetime must be a whole number of minutes from 1 to 10080 (7 days).",
+            );
+        }
+
         this.#prune();
         // Unambiguous characters, easy to type on a phone.
         const alphabet = "abcdefghjkmnpqrstuvwxyz23456789";
@@ -120,7 +135,7 @@ export class Auth {
             code += alphabet[byte % alphabet.length];
         }
 
-        const expiresAt = Date.now() + INVITE_TTL_MS;
+        const expiresAt = Date.now() + ttlMinutes * 60_000;
 
         this.#invites.set(code, { ...grant, expiresAt, createdBy: by.id });
 
@@ -174,7 +189,7 @@ export class Auth {
         const now = Date.now();
 
         for (const [code, invite] of this.#invites) {
-            if (invite.expiresAt < now) {
+            if (invite.expiresAt <= now) {
                 this.#invites.delete(code);
             }
         }

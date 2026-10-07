@@ -1649,6 +1649,71 @@ test("access holds: a refused tab hears nothing, narrowed access evicts, removal
     }
 });
 
+test("the invite API accepts a bounded lifetime and defaults to 15 minutes", async () => {
+    const { createServer } = await import("node:http");
+    const { createHandler } = await import("../src/server/http.ts");
+    const server = createServer(
+        createHandler({ app, listen: { host: "127.0.0.1", port: 0 }, restart: () => {} }),
+    );
+
+    await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+    const create = (body: unknown, token = app.config.ownerToken) =>
+        fetch(`${base}/api/invite`, {
+            method: "POST",
+            headers: {
+                authorization: `Bearer ${token}`,
+                "x-pocket": "1",
+                "content-type": "application/json",
+            },
+            body: JSON.stringify(body),
+        });
+    const id = await newSession();
+    const viewer = app.config.addUser("Cannot invite", "viewer");
+    const scoped = app.config.addUser("One session", "guest", [String(id)]);
+
+    try {
+        for (const ttlMinutes of [undefined, 60, 1440, 10080]) {
+            const before = Date.now();
+            const response = await create({ role: "viewer", session: Number(id), ttlMinutes });
+
+            assert.equal(response.status, 200);
+            const invite = (await response.json()) as {
+                code: string;
+                expiresAt: number;
+                grant: unknown;
+            };
+            const ttl = (ttlMinutes ?? 15) * 60_000;
+
+            assert.ok(invite.expiresAt >= before + ttl);
+            assert.ok(invite.expiresAt <= Date.now() + ttl);
+            assert.deepEqual(invite.grant, { role: "viewer", session: String(id) });
+            assert.equal((await fetch(`${base}/join/${invite.code}`)).status, 200);
+        }
+
+        for (const ttlMinutes of [0, -1, 1.5, 10081, "60", null, true, {}, []]) {
+            const response = await create({ ttlMinutes });
+
+            assert.equal(response.status, 400);
+            assert.match(((await response.json()) as { error: string }).error, /Invite lifetime/);
+        }
+
+        for (const { token } of [viewer, scoped]) {
+            assert.equal((await create({ ttlMinutes: 10080 }, token)).status, 403);
+        }
+
+        const expired = await fetch(`${base}/join/not-an-invite`);
+
+        assert.equal(expired.status, 410);
+        assert.doesNotMatch(await expired.text(), /last 15 minutes/);
+    } finally {
+        app.config.removeUser(viewer.user.id);
+        app.config.removeUser(scoped.user.id);
+        server.closeAllConnections();
+        await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
+});
+
 test("an invite stops working when its creator loses the right to invite", async () => {
     const { Auth } = await import("../src/server/auth.ts");
     const auth = new Auth(app.config);

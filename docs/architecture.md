@@ -15,7 +15,7 @@ Some state lives in this process alone, and a restart forgets it. For example:
 - which tool calls wait for approval;
 - the browser's pages;
 - when each run ended, which peek tiles use;
-- invites, which last 15 minutes anyway;
+- unused invites, which otherwise expire after their chosen lifetime (15 minutes by default, up to 7 days);
 - provider sign-ins in progress.
 
 ## Who owns what

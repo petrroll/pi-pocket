@@ -5,7 +5,7 @@
 import { useEffect, useRef, useState } from "preact/hooks";
 import { DiffReview, KIND_LETTERS, reloadChanges, useChanges, useWidth } from "./diff.js";
 import { loadFiles, suggestFiles } from "./files.js";
-import { FileView } from "./sheets/file.js";
+import { FileView, UploadButton } from "./sheets/file.js";
 import { actions, canSteer, closePeople, store } from "./store.js";
 import { html, Icon, Loader, Marked, shortPath } from "./ui.js";
 
@@ -15,11 +15,16 @@ const WIDTH_KEY = "pocket.filesWidth";
 /** Tree and viewer side by side from this width of the tile; one at a time below it. */
 const SIDE_BY_SIDE = 640;
 
-/** The tile is for people who can steer: the viewer reads files as Pi would. */
-export const filesAvailable = () => canSteer() && store.state.conversationId !== null;
+/** Everyone in a session can read its files; only steerers can change them or review Changes. */
+export const filesAvailable = () => store.state.me != null && store.state.conversationId !== null;
+export const changesAvailable = () => filesAvailable() && canSteer();
 
 /** Show or hide the tile. It takes the Browser and People panels' place. */
 export function setFilesOpen(open, tab) {
+    if (!canSteer()) {
+        tab = "files";
+    }
+
     if (open) {
         sessionStorage.setItem(OPEN_KEY, "1");
         sessionStorage.removeItem("pocket.browser");
@@ -160,26 +165,36 @@ function TreeFolder({ path, depth, ctx }) {
         const inside = entry.dir && ctx.changedDirs.has(full);
 
         return html`<div key=${entry.name} role="none">
-            <button
-                type="button"
-                role="treeitem"
-                aria-expanded=${entry.dir ? (open ? "true" : "false") : undefined}
-                class=${`ft-row ${entry.dir ? "dir" : "file"} ${ctx.selected === full ? "on" : ""} ${entry.name.startsWith(".") ? "dot" : ""} ${change ? `changed ${change}` : ""}`}
-                style=${`--depth:${depth}`}
-                data-path=${full}
-                title=${entry.name}
-                onClick=${() => (entry.dir ? ctx.toggle(full) : ctx.pick(full))}
-            >
+            <div class="ft-entry" role="none">
+                <button
+                    type="button"
+                    role="treeitem"
+                    aria-expanded=${entry.dir ? (open ? "true" : "false") : undefined}
+                    class=${`ft-row ${entry.dir ? "dir" : "file"} ${ctx.selected === full ? "on" : ""} ${entry.name.startsWith(".") ? "dot" : ""} ${change ? `changed ${change}` : ""}`}
+                    style=${`--depth:${depth}`}
+                    data-path=${full}
+                    title=${entry.name}
+                    onClick=${() => (entry.dir ? ctx.toggle(full) : ctx.pick(full))}
+                >
+                    ${
+                        entry.dir
+                            ? html`<${Icon} name="chevron" size=${12} class=${`chev ${open ? "open" : ""}`} />`
+                            : html`<span class="ft-spacer"></span>`
+                    }
+                    <${Icon} name=${entry.dir ? "folder" : "file"} size=${14} />
+                    <span class="ft-name">${entry.name}</span>
+                    ${inside && html`<span class="ft-dot" title="Has changes"></span>`}
+                    ${change && html`<span class=${`ft-kind ${change}`}>${KIND_LETTERS[change]}</span>`}
+                </button>
                 ${
-                    entry.dir
-                        ? html`<${Icon} name="chevron" size=${12} class=${`chev ${open ? "open" : ""}`} />`
-                        : html`<span class="ft-spacer"></span>`
+                    entry.dir &&
+                    html`<${UploadButton}
+                        directory=${full}
+                        compact=${true}
+                        onUploaded=${() => ctx.uploaded(full)}
+                    />`
                 }
-                <${Icon} name=${entry.dir ? "folder" : "file"} size=${14} />
-                <span class="ft-name">${entry.name}</span>
-                ${inside && html`<span class="ft-dot" title="Has changes"></span>`}
-                ${change && html`<span class=${`ft-kind ${change}`}>${KIND_LETTERS[change]}</span>`}
-            </button>
+            </div>
             ${open && html`<${TreeFolder} path=${full} depth=${depth + 1} ctx=${ctx} />`}
         </div>`;
     })}
@@ -284,7 +299,8 @@ function FilesTab({ changes }) {
     const root = view.agent?.cwd ?? view.conversation?.cwd ?? "";
     const [expanded, setExpanded] = useState(() => readExpanded(id));
     const [selected, setSelectedState] = useState(() => readOpen(id));
-    const [query, setQuery] = useState("");
+    const [savedQuery, setQuery] = useState("");
+    const query = canSteer() ? savedQuery : "";
     const [version, setVersion] = useState(0);
     // Another branch has other files: the tree and the open file are read again when it changes.
     const head = JSON.stringify(view.branch);
@@ -447,6 +463,18 @@ function FilesTab({ changes }) {
         }
     }
 
+    const refresh = () => {
+        folders.clear();
+        setVersion((before) => before + 1);
+        reloadChanges(id);
+    };
+
+    const uploaded = (directory) => {
+        setQuery("");
+        reveal(directory, true);
+        refresh();
+    };
+
     const ctx = {
         id,
         expanded,
@@ -456,6 +484,7 @@ function FilesTab({ changes }) {
         version: `${version}:${head}`,
         toggle,
         pick,
+        uploaded,
     };
 
     const showTree = side || !selected;
@@ -471,24 +500,34 @@ function FilesTab({ changes }) {
             showTree &&
             html`<div class="ft-pane">
                 <div class="ft-tools">
-                    <input
-                        type="search"
-                        class="ft-filter"
-                        placeholder="Go to file"
-                        value=${query}
-                        onInput=${(event) => setQuery(event.currentTarget.value)}
-                        onKeyDown=${(event) => {
-                            if (event.key === "Escape" && query !== "") {
-                                event.stopPropagation();
-                                setQuery("");
-                            } else if (event.key === "ArrowDown") {
-                                event.preventDefault();
-                                ref.current?.querySelector(".ft-tree .ft-row[data-path]")?.focus();
-                            }
-                        }}
-                        autocapitalize="off"
-                        autocomplete="off"
-                        spellcheck="false"
+                    ${
+                        canSteer() &&
+                        html`<input
+                            type="search"
+                            class="ft-filter"
+                            placeholder="Go to file"
+                            value=${query}
+                            onInput=${(event) => setQuery(event.currentTarget.value)}
+                            onKeyDown=${(event) => {
+                                if (event.key === "Escape" && query !== "") {
+                                    event.stopPropagation();
+                                    setQuery("");
+                                } else if (event.key === "ArrowDown") {
+                                    event.preventDefault();
+                                    ref.current
+                                        ?.querySelector(".ft-tree .ft-row[data-path]")
+                                        ?.focus();
+                                }
+                            }}
+                            autocapitalize="off"
+                            autocomplete="off"
+                            spellcheck="false"
+                        />`
+                    }
+                    <${UploadButton}
+                        directory=${root}
+                        compact=${true}
+                        onUploaded=${() => uploaded(root)}
                     />
                     <button
                         class="icon-button"
@@ -504,11 +543,7 @@ function FilesTab({ changes }) {
                         type="button"
                         title="Look again"
                         aria-label="Refresh"
-                        onClick=${() => {
-                            folders.clear();
-                            setVersion(version + 1);
-                            reloadChanges(id);
-                        }}
+                        onClick=${refresh}
                     >
                         <${Icon} name="reload" size=${16} />
                     </button>
@@ -566,6 +601,7 @@ function FilesTab({ changes }) {
                           path=${selected.path}
                           line=${selected.line}
                           onOpen=${(path) => pick(path)}
+                          onChange=${refresh}
                       />
                   </div>`
                 : side &&
@@ -578,7 +614,7 @@ function FilesTab({ changes }) {
 }
 
 export function FilesPanel() {
-    const { filesTab } = store.state;
+    const filesTab = canSteer() ? store.state.filesTab : "files";
     const { changes } = useChanges(true);
     // Pi's edits git does not list count too: outside a repository, they are all there is.
     const count = changes ? changes.files.length + changes.piOnly.length : 0;
@@ -596,16 +632,19 @@ export function FilesPanel() {
                 >
                     <${Icon} name="folder" size=${15} /> Files
                 </button>
-                <button
-                    type="button"
-                    role="tab"
-                    aria-selected=${filesTab === "changes" ? "true" : "false"}
-                    class=${filesTab === "changes" ? "on" : ""}
-                    onClick=${() => setTab("changes")}
-                >
-                    <${Icon} name="fork" size=${15} /> Changes
-                    ${count > 0 && html`<span class="files-count">${count}</span>`}
-                </button>
+                ${
+                    canSteer() &&
+                    html`<button
+                        type="button"
+                        role="tab"
+                        aria-selected=${filesTab === "changes" ? "true" : "false"}
+                        class=${filesTab === "changes" ? "on" : ""}
+                        onClick=${() => setTab("changes")}
+                    >
+                        <${Icon} name="fork" size=${15} /> Changes
+                        ${count > 0 && html`<span class="files-count">${count}</span>`}
+                    </button>`
+                }
             </div>
             <span class="grow"></span>
             <button
@@ -621,14 +660,17 @@ export function FilesPanel() {
         <div class="files-body" role="tabpanel" aria-label="Files" hidden=${filesTab !== "files"}>
             <${FilesTab} changes=${changes} />
         </div>
-        <div
-            class="files-body"
-            role="tabpanel"
-            aria-label="Changes"
-            hidden=${filesTab !== "changes"}
-        >
-            <${DiffReview} active=${filesTab === "changes"} />
-        </div>
+        ${
+            canSteer() &&
+            html`<div
+                class="files-body"
+                role="tabpanel"
+                aria-label="Changes"
+                hidden=${filesTab !== "changes"}
+            >
+                <${DiffReview} active=${filesTab === "changes"} />
+            </div>`
+        }
     </section>`;
 }
 
@@ -643,7 +685,7 @@ export function FilesButton() {
     return html`<button
         class=${`icon-button ${filesOpen ? "on" : ""}`}
         aria-label="Files"
-        title="Files and changes (Alt+E)"
+        title=${canSteer() ? "Files and changes (Alt+E)" : "Files (Alt+E)"}
         onClick=${() => toggleFiles()}
     >
         <${Icon} name="folder" />

@@ -4,7 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "preact/hooks";
 import { browserAvailable, toggleBrowser } from "./browser.js";
 import { planAvailable, schedulesAvailable } from "./commands.js";
-import { filesAvailable, toggleFiles } from "./files-panel.js";
+import { changesAvailable, filesAvailable, toggleFiles } from "./files-panel.js";
 import { togglePeeks } from "./peeks.js";
 import { setArchived, workspaceOrder } from "./sessions.js";
 import { branchAvailable, headLabel } from "./sheets/branch.js";
@@ -155,7 +155,7 @@ function actionItems() {
                 run: () => toggleFiles("files"),
             },
         conversation &&
-            filesAvailable() && {
+            changesAvailable() && {
                 label: "Changes",
                 detail: "review what changed, file by file",
                 icon: "fork",

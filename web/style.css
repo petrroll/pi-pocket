@@ -6032,6 +6032,21 @@ textarea.notes {
     padding-left: calc(0.4rem + var(--depth, 0) * 0.9rem);
 }
 
+.ft-entry {
+    display: flex;
+    align-items: center;
+}
+
+.ft-entry > .ft-row {
+    flex: 1;
+    min-width: 0;
+}
+
+.ft-entry .ft-upload {
+    flex: none;
+    padding: 0.25rem;
+}
+
 .ft-row.muted {
     color: var(--muted);
 }
@@ -6441,6 +6456,7 @@ textarea.notes {
 
 .file-tools {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 0.35rem;
 }
@@ -6452,6 +6468,10 @@ textarea.notes {
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+}
+
+.file-tools .button.danger {
+    color: var(--err);
 }
 
 .file-tools .icon-button {

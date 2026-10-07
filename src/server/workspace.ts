@@ -2,10 +2,11 @@
  * A conversation's folder on this machine, as people reach it through the app: which files a person may load or read,
  * the file viewer, the files for `@` mentions, Changes, its git branch, uploads, and new folders from the folder picker. The
  * operations people call directly check who may do them; the path helpers (`conversationPath`, `conversationFile`,
- * `readableFile`, `uploadDirectory`) leave seeing the conversation to their callers.
+ * `readableFile`, `uploadPath`, `uploadDirectory`) leave seeing the conversation to their callers.
  */
-import { lstatSync, mkdirSync, realpathSync, statSync } from "node:fs";
-import { isAbsolute, join, resolve, sep } from "node:path";
+import { lstatSync, mkdirSync, realpathSync, rmdirSync, statSync, unlinkSync } from "node:fs";
+import { realpath } from "node:fs/promises";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { PocketApp } from "./app.ts";
@@ -25,6 +26,12 @@ import type { User } from "./config.ts";
 import { describe, HttpError } from "./errors.ts";
 import { FileLists, type FileListing, type FileView, viewFile } from "./files.ts";
 import { displayPath, expandHome } from "./paths.ts";
+
+function inside(root: string, file: string): boolean {
+    const rel = relative(root, file);
+
+    return rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
 
 export class Workspace {
     readonly #app: PocketApp;
@@ -231,7 +238,8 @@ export class Workspace {
 
     /** A path as a conversation means it: absolute, `~/…`, or relative to the conversation's working directory. */
     conversationPath(id: ConversationId, path: string): string {
-        return resolve(this.#app.cwdOf(id), expandHome(path.trim()));
+        // File paths are literal: trimming could read or delete a different file.
+        return resolve(this.#app.cwdOf(id), expandHome(path));
     }
 
     /**
@@ -265,10 +273,7 @@ export class Workspace {
             .map(real)
             .filter((root): root is string => root !== undefined);
 
-        if (
-            target === undefined ||
-            !roots.some((root) => target === root || target.startsWith(root + sep))
-        ) {
+        if (target === undefined || !roots.some((root) => inside(root, target))) {
             throw new HttpError(404, "Image not found");
         }
 
@@ -296,12 +301,13 @@ export class Workspace {
         };
 
         const target = real(file);
-        const inside = (root: string) => target === root || target.startsWith(root + sep);
         const data = real(this.#app.dataDir);
 
         if (
-            inside(real(getAgentDir())) ||
-            (inside(data) && !inside(join(data, "uploads")) && !inside(join(data, "worktrees")))
+            inside(real(getAgentDir()), target) ||
+            (inside(data, target) &&
+                !inside(join(data, "uploads"), target) &&
+                !inside(join(data, "worktrees"), target))
         ) {
             throw new HttpError(404, "Not found");
         }
@@ -330,10 +336,7 @@ export class Workspace {
         return lineage;
     }
 
-    /**
-     * The files in a conversation's folder, for `@` mentions in the message box: for people who can write to Pi. It lists
-     * names under the folder only, so someone invited to one session sees no more than `conversationFile` lets them load.
-     */
+    /** The session's recursive file index, for steerers' search and @ mentions. */
     async fileList(id: ConversationId, user: User): Promise<FileListing> {
         this.#app.requireSee(user, id);
         this.#app.requireSteer(user);
@@ -342,27 +345,37 @@ export class Workspace {
         return this.#files.get(this.#app.cwdOf(id));
     }
 
-    /**
-     * A file or folder for the viewer, as a person who can steer may load it through the session (`conversationFile`):
-     * its text, or that it is an image, a folder's entries, or binary.
-     */
+    /** A readable file or folder: text, an image, a folder's entries, or binary. */
     async viewFile(
         id: ConversationId,
         user: User,
         path: string,
     ): Promise<{ path: string; display: string } & FileView> {
         this.#app.requireSee(user, id);
-        this.#app.requireSteer(user);
         await this.#app.conversation(id);
         let file: string;
 
         try {
             file = this.readableFile(user, id, path);
+            const content = await viewFile(file);
+
+            if (user.role === "viewer" && content.kind === "folder") {
+                const root = realpathSync(this.#app.cwdOf(id));
+                const uploads = await realpath(join(this.#app.dataDir, "uploads")).catch(
+                    () => null,
+                );
+
+                // A viewer may open known attachments, but must not enumerate the
+                // upload stash (including a parent session's uploads after a fork).
+                if (!inside(root, file) || (uploads !== null && inside(uploads, file))) {
+                    throw new HttpError(404, "Folder not found");
+                }
+            }
 
             return {
                 path: file,
                 display: displayPath(file, this.#app.cwdOf(id)),
-                ...(await viewFile(file)),
+                ...content,
             };
         } catch (error) {
             if (error instanceof HttpError || (error as NodeJS.ErrnoException).code === "ENOENT") {
@@ -424,6 +437,96 @@ export class Workspace {
             return await diffOf(this.#app.cwdOf(id), path, user.sessions !== undefined);
         } catch (error) {
             throw new HttpError(404, describe(error));
+        }
+    }
+
+    /** Delete a file or empty folder in this session, with the same driving/busy safeguards as undoing an edit. */
+    async deleteFile(id: ConversationId, user: User, path: string): Promise<void> {
+        this.#app.requireSee(user, id);
+        await this.#app.requireDriver(id, user);
+        await this.#app.conversation(id);
+
+        if (this.#app.isBusy(id)) {
+            throw new HttpError(
+                409,
+                "Pi is working here: wait for it, or stop it, before deleting a file.",
+            );
+        }
+
+        const requested = this.conversationPath(id, path);
+        let file: string;
+
+        try {
+            const root = realpathSync(this.#app.cwdOf(id));
+            const parent = realpathSync(this.readableFile(user, id, dirname(requested)));
+
+            file = join(parent, basename(requested));
+
+            if (file === root || !inside(root, file)) {
+                throw new HttpError(
+                    403,
+                    "Only files inside this session's folder can be deleted, not the folder itself.",
+                );
+            }
+
+            const info = lstatSync(file);
+
+            // Remove a link itself, not its target. Non-links still obey the private-data boundary.
+            if (!info.isSymbolicLink()) {
+                this.readableFile(user, id, file);
+            }
+
+            if (info.isDirectory()) {
+                rmdirSync(file);
+            } else if (info.isFile() || info.isSymbolicLink()) {
+                unlinkSync(file);
+            } else {
+                throw new HttpError(400, "Only files, links and empty folders can be deleted.");
+            }
+        } catch (error) {
+            if (error instanceof HttpError) {
+                throw error;
+            }
+
+            const code = (error as NodeJS.ErrnoException).code;
+
+            if (code === "ENOENT" || code === "ENOTDIR") {
+                throw new HttpError(404, "File not found");
+            }
+
+            if (code === "ENOTEMPTY" || code === "EEXIST") {
+                throw new HttpError(409, "Folder is not empty. Nothing was deleted.");
+            }
+
+            throw new HttpError(409, describe(error));
+        }
+
+        const what = `deleted ${displayPath(file, this.#app.cwdOf(id))}`;
+
+        await this.#app.commands.note(id, user, what);
+        await this.#app.collab.activity(id, user, what);
+    }
+
+    /** A new file in a readable folder. The route checks session access and steering, as for attachment uploads. */
+    uploadPath(user: User, id: ConversationId, directory: string, name: string): string {
+        if (name.trim() === "" || name === "." || name === ".." || /[/\\\0]/.test(name)) {
+            throw new HttpError(400, "Give the file's name, without a path.");
+        }
+
+        try {
+            const folder = realpathSync(this.readableFile(user, id, directory));
+
+            if (!statSync(folder).isDirectory()) {
+                throw new HttpError(400, "Upload to a folder, not a file.");
+            }
+
+            return join(folder, name);
+        } catch (error) {
+            if (error instanceof HttpError) {
+                throw error;
+            }
+
+            throw new HttpError(404, "Folder not found");
         }
     }
 

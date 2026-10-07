@@ -820,7 +820,18 @@ export const actions = {
     createSession: (cwd, { worktree = false } = {}) =>
         api("sessions", { cwd, ...(worktree ? { worktree } : {}) }),
     updateSession: (id, patch) => api(`sessions/${id}`, patch),
-    upload: (file) => api(`c/${current()}/upload?name=${encodeURIComponent(file.name)}`, file),
+    upload: (file, { id = current(), directory } = {}) => {
+        const query = new URLSearchParams({
+            name: file.name,
+            ...(directory === undefined ? {} : { directory }),
+        });
+
+        return api(`c/${id}/upload?${query}`, file);
+    },
+    deleteFile: (path) =>
+        api(`c/${current()}/file?path=${encodeURIComponent(path)}`, undefined, {
+            method: "DELETE",
+        }),
     fullEntry: (entryId) => api(`c/${current()}/entry/${entryId}`),
     history: (before) => api(`c/${current()}/history?before=${before}`),
 };
@@ -897,7 +908,7 @@ function sheetChange(sheet, state) {
 }
 
 /**
- * The Files tile shows now: asked for, in a conversation, for someone who can steer, and not in the Browser panel's
+ * The Files tile shows now: asked for, in a conversation, for someone signed in, and not in the Browser panel's
  * place (one panel at a time). `App` draws it by this, and `openFile` opens files in it by this.
  */
 export function filesShown(state = store.state) {
@@ -909,7 +920,7 @@ export function filesShown(state = store.state) {
         state.filesOpen &&
         state.conversationId !== null &&
         !state.missing &&
-        state.me?.role !== "viewer" &&
+        state.me != null &&
         !browsing
     );
 }

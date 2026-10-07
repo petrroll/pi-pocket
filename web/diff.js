@@ -797,6 +797,10 @@ const changesCache = new Map();
 
 /** Ask again for what changed in a conversation's folder, at most once at a time. */
 export function reloadChanges(id = store.state.conversationId) {
+    if (!canSteer()) {
+        return Promise.resolve();
+    }
+
     const known = changesCache.get(id) ?? { data: null, error: null, pending: null };
 
     if (known.pending) {
@@ -818,18 +822,19 @@ export function reloadChanges(id = store.state.conversationId) {
  * the conversation moves on (Pi's edits show up on their own) while `live`.
  */
 export function useChanges(live = true) {
+    const permitted = canSteer();
     const id = store.state.conversationId;
     const known = changesCache.get(id);
     const lastEntry = store.state.view.order?.at(-1);
     const busy = store.state.view.live?.busy;
 
     useEffect(() => {
-        if (!changesCache.get(id)?.data) {
+        if (permitted && !changesCache.get(id)?.data) {
             reloadChanges(id);
         }
-    }, [id]);
+    }, [id, permitted]);
     useEffect(() => {
-        if (!live) {
+        if (!live || !permitted) {
             return;
         }
 
@@ -839,9 +844,12 @@ export function useChanges(live = true) {
         const timer = setTimeout(() => reloadChanges(id), wait);
 
         return () => clearTimeout(timer);
-    }, [lastEntry, busy, live, id]);
+    }, [lastEntry, busy, live, id, permitted]);
 
-    return { changes: known?.data ?? null, error: known?.error ?? null };
+    return {
+        changes: permitted ? (known?.data ?? null) : null,
+        error: permitted ? (known?.error ?? null) : null,
+    };
 }
 
 /** Diffs fetched per conversation and file, until the file changes (its version, from the server). */

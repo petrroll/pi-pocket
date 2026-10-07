@@ -57,14 +57,14 @@ A module split into parts keeps its name for the part others import, with the re
 
 ### A conversation's folder and history
 
-| File                                   | Owns                                                                                                                                                                                               |
-| -------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `workspace.ts`                         | `app.workspace`: which files a person may load or read through a conversation, the file viewer, the files for `@` mentions, Changes, uploads, new folders from the folder picker                   |
-| `transcripts.ts`                       | `app.transcripts`: stored history as people read it: an entry (its own, or one a fork inherited), the images in it, what came before the active context, and the session as Markdown               |
-| `files.ts`                             | The files in a session's folder for `@` mentions: git's list, or a capped walk; kept briefly per folder, versioned, and compressed once. The file viewer's reads, and the paths a message mentions |
-| `changes.ts`, `worktrees.ts`, `git.ts` | The Files tile's Changes (and undoing a file there), per-session worktrees, and the git runner both use                                                                                            |
-| `branches.ts`                          | A session's git branch: read from the repository's HEAD for its view (`Room` looks every few seconds), listed and switched for the branch picker                                                   |
-| `export.ts`                            | A session as Markdown                                                                                                                                                                              |
+| File                                   | Owns                                                                                                                                                                                                  |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `workspace.ts`                         | `app.workspace`: which files a person may load or read through a conversation, the file viewer, the files for `@` mentions, Changes, uploads, downloads, deletion, new folders from the folder picker |
+| `transcripts.ts`                       | `app.transcripts`: stored history as people read it: an entry (its own, or one a fork inherited), the images in it, what came before the active context, and the session as Markdown                  |
+| `files.ts`                             | The files in a session's folder for `@` mentions: git's list, or a capped walk; kept briefly per folder, versioned, and compressed once. The file viewer's reads, and the paths a message mentions    |
+| `changes.ts`, `worktrees.ts`, `git.ts` | The Files tile's Changes (and undoing a file there), per-session worktrees, and the git runner both use                                                                                               |
+| `branches.ts`                          | A session's git branch: read from the repository's HEAD for its view (`Room` looks every few seconds), listed and switched for the branch picker                                                      |
+| `export.ts`                            | A session as Markdown                                                                                                                                                                                 |
 
 ### HTTP: `http.ts` and `http/`
 
@@ -76,7 +76,7 @@ A module split into parts keeps its name for the part others import, with the re
 | `http/browser-routes.ts`      | `/api/c/:id/browser`: the Browser panel's frames, console, and input                                                                                            |
 | `http/push-routes.ts`         | `/api/push`: this device's subscription, what to notify about, a test                                                                                           |
 | `http/events.ts`              | Each tab's events: the event stream (`/api/events`), or long polling (`/api/poll`) where a tunnel holds streams back                                            |
-| `http/assets.ts`              | The web app's files, the vendored modules, the app's content security policy, and image files                                                                   |
+| `http/assets.ts`              | The web app's files, vendored modules, content security policy, images and file downloads                                                                       |
 | `http/sign-in.ts`             | `/login`, `/join/:code`, and `/share` before the service worker takes shares                                                                                    |
 | `http/artifacts.ts`           | `/a/…`: an artifact as its own page, in a sandbox; `/a/frame`, the page a reply's HTML runs in once someone taps Run                                            |
 | `http/io.ts`                  | What every route uses: reading a body, writing JSON, `ApiRequest`                                                                                               |

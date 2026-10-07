@@ -1216,7 +1216,12 @@ test("invites carry a role and a session over HTTP, and viewers get 403 on steer
             403,
         );
         assert.equal((await call(token, `c/${id}/files`)).status, 403);
-        assert.equal((await call(token, `c/${id}/view?path=README.md`)).status, 403);
+        writeFileSync(join(work, "viewer-download.txt"), "shared file");
+        assert.equal((await call(token, `c/${id}/view?path=viewer-download.txt`)).status, 200);
+        assert.equal(
+            await (await call(token, `c/${id}/download?path=viewer-download.txt`)).text(),
+            "shared file",
+        );
         assert.equal((await call(token, `c/${id}/shell`, { command: "echo hi" })).status, 403);
         assert.equal((await call(token, `c/${id}/changes/revert`, { path: "a.txt" })).status, 403);
         assert.equal(

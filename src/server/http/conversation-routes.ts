@@ -1,12 +1,13 @@
 /** `/api/c/:id`: one conversation's routes, for people the API has checked may see it. */
 import { randomUUID } from "node:crypto";
-import { createWriteStream, rmSync } from "node:fs";
+import { rmSync } from "node:fs";
+import { open } from "node:fs/promises";
 import { basename, extname, join, resolve, sep } from "node:path";
 import { pipeline } from "node:stream/promises";
 import type { ConversationId } from "@earendil-works/pi-durable";
 import type { Attachment, SubmitRequest } from "../commands.ts";
 import { HttpError } from "../errors.ts";
-import { serveImage, TYPES } from "./assets.ts";
+import { serveDownload, serveImage, TYPES } from "./assets.ts";
 import { type ApiRequest, json, readJson, send } from "./io.ts";
 
 const MAX_UPLOAD = 50 * 1024 * 1024;
@@ -259,6 +260,30 @@ export async function conversationRoutes(
         return serveImage(request, response, app.workspace.conversationFile(user, id, requested));
     }
 
+    if (third === "download" && method === "GET") {
+        const requested = url.searchParams.get("path") ?? "";
+
+        if (requested.trim() === "") {
+            throw new HttpError(400, "path is required");
+        }
+
+        await app.conversation(id);
+
+        return serveDownload(response, app.workspace.readableFile(user, id, requested));
+    }
+
+    if (third === "file" && method === "DELETE") {
+        const requested = url.searchParams.get("path") ?? "";
+
+        if (requested.trim() === "") {
+            throw new HttpError(400, "path is required");
+        }
+
+        await app.workspace.deleteFile(id, user, requested);
+
+        return json(response, 200, { ok: true });
+    }
+
     if (third === "entry" && fourth !== undefined && method === "GET") {
         const entry = await app.transcripts.fullEntry(id, Number(fourth));
 
@@ -389,12 +414,26 @@ export async function conversationRoutes(
         }
 
         await app.conversation(id);
-        const name = safeName(url.searchParams.get("name") ?? "upload");
-        const directory = app.workspace.uploadDirectory(id);
-        // Unique, and never written over: pasted images all arrive as image.png, often at once.
-        const file = join(
-            directory,
-            `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}-${name}`,
+        const directory = url.searchParams.get("directory");
+        const given = url.searchParams.get("name") ?? "upload";
+        const name = directory === null ? safeName(given) : given;
+        // Attachments keep unique names; Files uploads keep their names, without overwriting anything.
+        const file =
+            directory === null
+                ? join(
+                      app.workspace.uploadDirectory(id),
+                      `${Date.now().toString(36)}-${randomUUID().slice(0, 8)}-${name}`,
+                  )
+                : app.workspace.uploadPath(user, id, directory, name);
+        // Reserve the name before piping: a failed open must not destroy the HTTP socket.
+        const target = await open(file, "wx", directory === null ? 0o600 : 0o666).catch(
+            (error: NodeJS.ErrnoException) => {
+                if (error.code === "EEXIST") {
+                    throw new HttpError(409, `${name} already exists. Nothing was overwritten.`);
+                }
+
+                throw error;
+            },
         );
         let size = 0;
 
@@ -407,19 +446,18 @@ export async function conversationRoutes(
         });
 
         try {
-            await pipeline(request, createWriteStream(file, { mode: 0o600, flags: "wx" }));
+            await pipeline(request, target.createWriteStream());
         } catch (error) {
-            // A cut-off or oversized upload leaves nothing behind (and a name already taken was never this upload's).
-            // Cut off is the client's doing, not a server error.
-            if ((error as NodeJS.ErrnoException).code !== "EEXIST") {
-                rmSync(file, { force: true });
-            }
+            // A cut-off or oversized upload leaves nothing behind; this file was created by this request.
+            rmSync(file, { force: true });
 
             if (error instanceof HttpError || request.complete) {
                 throw error;
             }
 
             throw new HttpError(400, "The upload stopped before it finished");
+        } finally {
+            await target.close();
         }
 
         const mime =

@@ -1,10 +1,20 @@
-/** The web app's own files and the modules it imports, its content security policy, and image files it shows. */
+/** The web app's files and modules, its content security policy, images it shows, and file downloads. */
 import { createHash } from "node:crypto";
-import { closeSync, createReadStream, openSync, readFileSync, readSync, statSync } from "node:fs";
+import {
+    closeSync,
+    constants,
+    createReadStream,
+    openSync,
+    readFileSync,
+    readSync,
+    statSync,
+} from "node:fs";
+import { open } from "node:fs/promises";
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { extname, join } from "node:path";
+import { basename, extname, join } from "node:path";
+import { pipeline } from "node:stream/promises";
 import { APP_ROOT } from "../config.ts";
-import { HttpError } from "../errors.ts";
+import { describe, HttpError } from "../errors.ts";
 import { send } from "./io.ts";
 
 export const WEB = join(APP_ROOT, "web");
@@ -165,6 +175,62 @@ export function serveFile(response: ServerResponse, file: string, fallbackType?:
             "cache-control": "no-cache",
         },
     );
+}
+
+/** A whole regular file, never rendered as an app page. The caller checks access to its path. */
+export async function serveDownload(response: ServerResponse, file: string): Promise<void> {
+    // Nonblocking open lets us reject a pipe without waiting for a writer. Check the
+    // descriptor, not the path: both the size and the stream must refer to this file.
+    const handle = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)).catch(
+        (error: NodeJS.ErrnoException) => {
+            if (error.code === "ENOENT" || error.code === "ENOTDIR") {
+                throw new HttpError(404, "File not found");
+            }
+
+            if (error.code === "EACCES" || error.code === "EPERM") {
+                throw new HttpError(403, "File is not readable");
+            }
+
+            if (error.code === "EISDIR") {
+                throw new HttpError(400, "Only regular files can be downloaded.");
+            }
+
+            throw new HttpError(409, describe(error));
+        },
+    );
+
+    try {
+        const info = await handle.stat();
+
+        if (!info.isFile()) {
+            throw new HttpError(400, "Only regular files can be downloaded.");
+        }
+
+        const name = encodeURIComponent(basename(file)).replace(
+            /[!'()*]/g,
+            (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
+        );
+
+        response.writeHead(200, {
+            "content-type": "application/octet-stream",
+            "content-disposition": `attachment; filename="download"; filename*=UTF-8''${name}`,
+            "content-length": String(info.size),
+            "cache-control": "no-store",
+        });
+
+        if (info.size === 0) {
+            response.end();
+
+            return;
+        }
+
+        // Bound a growing file to its declared length. Pipeline also closes it on cancellation.
+        await pipeline(handle.createReadStream({ end: info.size - 1 }), response).catch(() =>
+            response.destroy(),
+        );
+    } finally {
+        await handle.close();
+    }
 }
 
 /** An image file from this machine, for `![alt](path)` in replies and for uploaded attachments. */

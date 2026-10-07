@@ -44,6 +44,7 @@ before(async () => {
     }
 
     mkdirSync(directory);
+    writeFileSync(join(directory, "seed.txt"), "seed");
     app = await openApp(scriptedModel());
     id = await newSession(app);
     server = createServer(
@@ -211,6 +212,37 @@ for (const [name, viewport] of [
             assert.deepEqual(
                 readFileSync(join(directory, `${name}-drop.bin`)),
                 Buffer.from([0, 128, 255]),
+            );
+            await page.evaluate(
+                `const input = document.querySelector('.ft-filter'); input.value = 'nested'; input.dispatchEvent(new Event('input', { bubbles: true }));`,
+            );
+            await until(
+                async () =>
+                    read<boolean>(
+                        `return JSON.stringify(!!document.querySelector('.ft-matches .ft-row.dir'))`,
+                    ),
+                "folder search result",
+            );
+            await page.evaluate(`
+                const row = document.querySelector('.ft-matches .ft-row.dir');
+                const transfer = new DataTransfer();
+                transfer.items.add(new File(['search drop'], ${JSON.stringify(`${name}-search.txt`)}));
+                row.dispatchEvent(new DragEvent('drop', { bubbles: true, cancelable: true, dataTransfer: transfer }));
+            `);
+            await until(
+                () => existsSync(join(directory, `${name}-search.txt`)),
+                "drop into a searched folder",
+            );
+            await until(
+                async () =>
+                    read<boolean>(
+                        `return JSON.stringify(!document.querySelector('.file-upload-tools button').disabled)`,
+                    ),
+                "search drop finished",
+            );
+            assert.equal(existsSync(join(work, `${name}-search.txt`)), false);
+            await page.evaluate(
+                `const input = document.querySelector('.ft-filter'); input.value = ''; input.dispatchEvent(new Event('input', { bubbles: true }));`,
             );
         },
     );

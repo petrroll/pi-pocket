@@ -269,7 +269,11 @@ export async function conversationRoutes(
 
         await app.conversation(id);
 
-        return serveDownload(response, app.workspace.readableFile(user, id, requested));
+        return serveDownload(
+            response,
+            app.workspace.readableFile(user, id, requested),
+            basename(requested),
+        );
     }
 
     if (third === "file" && method === "DELETE") {

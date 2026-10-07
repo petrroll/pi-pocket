@@ -216,7 +216,7 @@ function Matches({ query, root, onPick }) {
         ${found.items.map(
             (entry) => html`<button
                 type="button"
-                class="ft-row match"
+                class=${`ft-row match ${entry.dir ? "dir" : "file"}`}
                 role="option"
                 data-path=${`${root}/${entry.path.replace(/\/$/, "")}`}
                 onClick=${(event) => onPick(event.currentTarget.dataset.path, entry.dir)}

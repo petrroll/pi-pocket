@@ -116,6 +116,22 @@ test("named uploads go into the chosen folder; downloads preserve binary, Unicod
     assert.equal((await (await download("empty")).arrayBuffer()).byteLength, 0);
 });
 
+test("downloads use the selected link's filename for every role", async () => {
+    writeFileSync(join(work, "actual.txt"), "linked");
+    symlinkSync(join(work, "actual.txt"), join(work, "selected.txt"));
+
+    for (const token of [owner, guest, scoped, viewer]) {
+        const response = await download("selected.txt", token);
+
+        assert.equal(response.status, 200);
+        assert.match(
+            response.headers.get("content-disposition") ?? "",
+            /filename\*=UTF-8''selected\.txt$/,
+        );
+        assert.equal(await response.text(), "linked");
+    }
+});
+
 test("downloads return the whole file, not the viewer's truncated text", async () => {
     const text = "line of text\n".repeat(100_000);
 

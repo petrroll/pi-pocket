@@ -178,7 +178,11 @@ export function serveFile(response: ServerResponse, file: string, fallbackType?:
 }
 
 /** A whole regular file, never rendered as an app page. The caller checks access to its path. */
-export async function serveDownload(response: ServerResponse, file: string): Promise<void> {
+export async function serveDownload(
+    response: ServerResponse,
+    file: string,
+    filename = basename(file),
+): Promise<void> {
     // Nonblocking open lets us reject a pipe without waiting for a writer. Check the
     // descriptor, not the path: both the size and the stream must refer to this file.
     const handle = await open(file, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0)).catch(
@@ -206,7 +210,7 @@ export async function serveDownload(response: ServerResponse, file: string): Pro
             throw new HttpError(400, "Only regular files can be downloaded.");
         }
 
-        const name = encodeURIComponent(basename(file)).replace(
+        const name = encodeURIComponent(filename).replace(
             /[!'()*]/g,
             (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`,
         );
